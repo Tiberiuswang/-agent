@@ -14,82 +14,11 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.markdown("""
-<style>
-    html, body, [class*="css"]  {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-    }
-    .stApp { background-color: #0f1117; }
-    section[data-testid="stSidebar"] {
-        background-color: #161b22;
-        border-right: 1px solid #30363d;
-    }
-    .block-container {
-        padding-top: 1.5rem;
-        padding-bottom: 2rem;
-        max-width: 1400px;
-    }
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 4px;
-        background: #161b22;
-        padding: 4px;
-        border-radius: 8px;
-        border: 1px solid #30363d;
-    }
-    .stTabs [data-baseweb="tab"] {
-        border-radius: 6px;
-        padding: 8px 16px;
-        font-weight: 500;
-        color: #8b949e;
-    }
-    .stTabs [aria-selected="true"] {
-        background: #21262d !important;
-        color: #f0f6fc !important;
-    }
-    [data-testid="stMetric"] {
-        background: #161b22;
-        border: 1px solid #30363d;
-        border-radius: 8px;
-        padding: 12px 16px;
-    }
-    [data-testid="stMetricLabel"] { color: #8b949e; font-size: 0.85rem; }
-    .stButton > button {
-        border-radius: 6px;
-        font-weight: 500;
-        border: 1px solid #30363d;
-    }
-    .stButton > button[kind="primary"] {
-        background: #238636;
-        border-color: #238636;
-        color: #fff;
-    }
-    .stButton > button[kind="primary"]:hover {
-        background: #2ea043;
-        border-color: #2ea043;
-    }
-    .stTextInput > div > div > input,
-    .stNumberInput > div > div > input,
-    .stSelectbox > div > div {
-        background-color: #0d1117;
-        border: 1px solid #30363d;
-        border-radius: 6px;
-        color: #f0f6fc;
-    }
-    .stDataFrame {
-        border: 1px solid #30363d;
-        border-radius: 8px;
-        overflow: hidden;
-    }
-    hr { border-color: #30363d; }
-    .stCaption { color: #8b949e !important; font-size: 0.8rem; }
-    footer { visibility: hidden; }
-</style>
-""", unsafe_allow_html=True)
 
 PK = list(PRODUCTS)
 fmt = lambda k: f"{PRODUCTS[k]['name']}  {PRODUCTS[k]['lo']}~{PRODUCTS[k]['hi']}℃"
 COLS = ["name", "address", "lat", "lng", "win_start", "win_end", "dwell", "demand"]
-COLORS = ["#58a6ff", "#f85149", "#3fb950", "#d29922", "#a371f7", "#f778ba"]
+COLORS = ["#1f77b4", "#d62728", "#2ca02c", "#ff7f0e", "#9467bd", "#8c564b"]
 
 DEFAULT_AMAP_KEY = "ea39c391cab1aaf7bfb9d23189c383fc"
 
@@ -400,9 +329,6 @@ with T_ROUTE:
             yaxis_scaleanchor="x",
             height=380,
             margin=dict(t=40, b=10),
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#c9d1d9"),
         )
         c1.plotly_chart(fm, use_container_width=True)
 
@@ -423,9 +349,6 @@ with T_ROUTE:
             yaxis_title="℃",
             height=380,
             margin=dict(t=40, b=10),
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#c9d1d9"),
         )
         c2.plotly_chart(ft, use_container_width=True)
 
@@ -442,9 +365,6 @@ with T_ROUTE:
             title="成本对比",
             height=260,
             margin=dict(t=40, b=10),
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#c9d1d9"),
         )
         c1.plotly_chart(fb, use_container_width=True)
 
@@ -463,9 +383,6 @@ with T_ROUTE:
             height=260,
             margin=dict(t=40, b=10),
             yaxis_autorange="reversed",
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#c9d1d9"),
         )
         c2.plotly_chart(fc, use_container_width=True)
 
@@ -527,9 +444,6 @@ with T_TEMP:
             xaxis_title="分钟",
             yaxis_title="℃",
             margin=dict(t=20, b=10),
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#c9d1d9"),
         )
         l, r = st.columns([2, 1])
         l.plotly_chart(f, use_container_width=True)
@@ -591,9 +505,6 @@ with T_INV:
         height=300,
         yaxis_title="天",
         margin=dict(t=40, b=10),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#c9d1d9"),
     )
     st.plotly_chart(fig, use_container_width=True)
 
@@ -642,9 +553,6 @@ with T_FC:
             height=320,
             xaxis_title="天",
             margin=dict(t=20, b=10),
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#c9d1d9"),
         )
         c2.plotly_chart(fig, use_container_width=True)
         m = c2.columns(4)
@@ -683,9 +591,6 @@ with T_MODE:
         title="总成本构成",
         height=320,
         margin=dict(t=40, b=10),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#c9d1d9"),
     )
     c2.plotly_chart(fig, use_container_width=True)
     c2.dataframe(
