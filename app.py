@@ -19,77 +19,134 @@ st.markdown("""
     html, body, [class*="css"]  {
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
     }
-    .stApp { background-color: #0f1117; }
+    .stApp { background-color: #0a0a0a; }
     section[data-testid="stSidebar"] {
-        background-color: #161b22;
-        border-right: 1px solid #30363d;
+        background-color: #111111;
+        border-right: 1px solid #2a2a2a;
+    }
+    section[data-testid="stSidebar"] .stMarkdown,
+    section[data-testid="stSidebar"] label,
+    section[data-testid="stSidebar"] p {
+        color: #e8d5a3 !important;
     }
     .block-container {
         padding-top: 1.5rem;
         padding-bottom: 2rem;
         max-width: 1400px;
     }
+    /* Tabs */
     .stTabs [data-baseweb="tab-list"] {
         gap: 4px;
-        background: #161b22;
+        background: #141414;
         padding: 4px;
         border-radius: 8px;
-        border: 1px solid #30363d;
+        border: 1px solid #2a2a2a;
     }
     .stTabs [data-baseweb="tab"] {
         border-radius: 6px;
         padding: 8px 16px;
         font-weight: 500;
-        color: #8b949e;
+        color: #a89060;
     }
     .stTabs [aria-selected="true"] {
-        background: #21262d !important;
-        color: #f0f6fc !important;
+        background: linear-gradient(135deg, #1a1508 0%, #2a2210 100%) !important;
+        color: #f0d78c !important;
+        border: 1px solid #c9a227 !important;
     }
+    /* Metric cards */
     [data-testid="stMetric"] {
-        background: #161b22;
-        border: 1px solid #30363d;
-        border-radius: 8px;
-        padding: 12px 16px;
+        background: linear-gradient(145deg, #141414 0%, #1a1508 100%);
+        border: 1px solid #3d3420;
+        border-radius: 10px;
+        padding: 14px 16px;
+        box-shadow: 0 2px 8px rgba(201, 162, 39, 0.08);
     }
-    [data-testid="stMetricLabel"] { color: #8b949e; font-size: 0.85rem; }
+    [data-testid="stMetricLabel"] { color: #c9a227; font-size: 0.85rem; }
+    [data-testid="stMetricValue"] { color: #f5e6b8 !important; }
+    /* Buttons */
     .stButton > button {
         border-radius: 6px;
         font-weight: 500;
-        border: 1px solid #30363d;
+        border: 1px solid #3d3420;
+        background: #1a1a1a;
+        color: #e8d5a3;
+    }
+    .stButton > button:hover {
+        border-color: #c9a227;
+        color: #f0d78c;
+        background: #1f1a0a;
     }
     .stButton > button[kind="primary"] {
-        background: #238636;
-        border-color: #238636;
-        color: #fff;
+        background: linear-gradient(135deg, #c9a227 0%, #a67c00 100%);
+        border-color: #c9a227;
+        color: #0a0a0a;
+        font-weight: 600;
     }
     .stButton > button[kind="primary"]:hover {
-        background: #2ea043;
-        border-color: #2ea043;
+        background: linear-gradient(135deg, #dfb73a 0%, #c9a227 100%);
+        border-color: #dfb73a;
+        color: #0a0a0a;
     }
+    /* Inputs */
     .stTextInput > div > div > input,
     .stNumberInput > div > div > input,
-    .stSelectbox > div > div {
-        background-color: #0d1117;
-        border: 1px solid #30363d;
-        border-radius: 6px;
-        color: #f0f6fc;
+    .stSelectbox > div > div,
+    .stTextArea textarea {
+        background-color: #141414 !important;
+        border: 1px solid #3d3420 !important;
+        border-radius: 6px !important;
+        color: #f5e6b8 !important;
     }
+    .stTextInput > div > div > input:focus,
+    .stNumberInput > div > div > input:focus {
+        border-color: #c9a227 !important;
+        box-shadow: 0 0 0 1px #c9a22733 !important;
+    }
+    /* Slider */
+    .stSlider [data-baseweb="slider"] div[role="slider"] {
+        background-color: #c9a227 !important;
+    }
+    /* Dataframe */
     .stDataFrame {
-        border: 1px solid #30363d;
+        border: 1px solid #3d3420;
         border-radius: 8px;
         overflow: hidden;
     }
-    hr { border-color: #30363d; }
-    .stCaption { color: #8b949e !important; font-size: 0.8rem; }
+    hr { border-color: #2a2a2a; }
+    .stCaption { color: #a89060 !important; font-size: 0.8rem; }
+    /* Headers & text */
+    h1, h2, h3, h4 { color: #f0d78c !important; }
+    p, span, label, .stMarkdown { color: #d4c4a0; }
+    /* Radio / checkbox */
+    .stRadio label, .stCheckbox label { color: #e8d5a3 !important; }
+    /* Expander */
+    .streamlit-expanderHeader {
+        background: #141414 !important;
+        color: #e8d5a3 !important;
+        border: 1px solid #3d3420 !important;
+        border-radius: 6px !important;
+    }
+    /* Success / warning / error / info */
+    .stAlert { border-radius: 8px; }
+    /* Chat */
+    [data-testid="stChatMessage"] {
+        background: #141414;
+        border: 1px solid #2a2a2a;
+        border-radius: 10px;
+    }
     footer { visibility: hidden; }
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: #0a0a0a; }
+    ::-webkit-scrollbar-thumb { background: #3d3420; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #c9a227; }
 </style>
 """, unsafe_allow_html=True)
 
 PK = list(PRODUCTS)
 fmt = lambda k: f"{PRODUCTS[k]['name']}  {PRODUCTS[k]['lo']}~{PRODUCTS[k]['hi']}℃"
 COLS = ["name", "address", "lat", "lng", "win_start", "win_end", "dwell", "demand"]
-COLORS = ["#58a6ff", "#f85149", "#3fb950", "#d29922", "#a371f7", "#f778ba"]
+COLORS = ["#c9a227", "#e8d5a3", "#a67c00", "#f0d78c", "#8b7355", "#dfb73a"]
 
 DEFAULT_AMAP_KEY = "ea39c391cab1aaf7bfb9d23189c383fc"
 
@@ -211,7 +268,7 @@ def fetch_weather(city, key):
 def band(fig, p):
     fig.add_hrect(
         y0=p["lo"], y1=p["hi"],
-        fillcolor="rgba(63, 185, 80, 0.15)",
+        fillcolor="rgba(201, 162, 39, 0.12)",
         line_width=0,
         annotation_text="合规温区",
         annotation_position="top left",
@@ -402,7 +459,7 @@ with T_ROUTE:
             margin=dict(t=40, b=10),
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#c9d1d9"),
+            font=dict(color="#e8d5a3"),
         )
         c1.plotly_chart(fm, use_container_width=True)
 
@@ -425,7 +482,7 @@ with T_ROUTE:
             margin=dict(t=40, b=10),
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#c9d1d9"),
+            font=dict(color="#e8d5a3"),
         )
         c2.plotly_chart(ft, use_container_width=True)
 
@@ -433,7 +490,7 @@ with T_ROUTE:
             go.Bar(
                 x=["原始顺序", "优化后"],
                 y=[res["baseline_cost_yuan"], res["total_cost_yuan"]],
-                marker_color=["#6e7681", "#3fb950"],
+                marker_color=["#3d3420", "#c9a227"],
                 text=[f"¥{res['baseline_cost_yuan']:,.0f}", f"¥{res['total_cost_yuan']:,.0f}"],
                 textposition="outside",
             )
@@ -444,7 +501,7 @@ with T_ROUTE:
             margin=dict(t=40, b=10),
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#c9d1d9"),
+            font=dict(color="#e8d5a3"),
         )
         c1.plotly_chart(fb, use_container_width=True)
 
@@ -455,7 +512,7 @@ with T_ROUTE:
                 y=list(bd.keys()),
                 orientation="h",
                 text=[f"¥{v:,.0f}" for v in bd.values()],
-                marker_color="#58a6ff",
+                marker_color="#c9a227",
             )
         )
         fc.update_layout(
@@ -465,7 +522,7 @@ with T_ROUTE:
             yaxis_autorange="reversed",
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#c9d1d9"),
+            font=dict(color="#e8d5a3"),
         )
         c2.plotly_chart(fc, use_container_width=True)
 
@@ -518,9 +575,9 @@ with T_TEMP:
         al = tools.temperature_alerts(product, cur) if cur else None
         df = pd.DataFrame(log)
         f = go.Figure()
-        f.add_trace(go.Scatter(x=df.t_min, y=df.temp, name="全程", line=dict(color="#484f58")))
+        f.add_trace(go.Scatter(x=df.t_min, y=df.temp, name="全程", line=dict(color="#3d3420")))
         d2 = df[df.t_min <= now]
-        f.add_trace(go.Scatter(x=d2.t_min, y=d2.temp, name="已发生", line=dict(color="#f85149", width=2.5)))
+        f.add_trace(go.Scatter(x=d2.t_min, y=d2.temp, name="已发生", line=dict(color="#c9a227", width=2.5)))
         band(f, p)
         f.update_layout(
             height=360,
@@ -529,7 +586,7 @@ with T_TEMP:
             margin=dict(t=20, b=10),
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#c9d1d9"),
+            font=dict(color="#e8d5a3"),
         )
         l, r = st.columns([2, 1])
         l.plotly_chart(f, use_container_width=True)
@@ -593,7 +650,7 @@ with T_INV:
         margin=dict(t=40, b=10),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#c9d1d9"),
+        font=dict(color="#e8d5a3"),
     )
     st.plotly_chart(fig, use_container_width=True)
 
@@ -629,13 +686,13 @@ with T_FC:
     else:
         n = len(hist)
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=list(range(1, n + 1)), y=hist, name="历史需求", line=dict(color="#58a6ff")))
+        fig.add_trace(go.Scatter(x=list(range(1, n + 1)), y=hist, name="历史需求", line=dict(color="#c9a227")))
         fig.add_trace(
             go.Scatter(
                 x=list(range(n + 1, n + 1 + len(f["forecast"]))),
                 y=f["forecast"],
                 name="预测",
-                line=dict(dash="dash", color="#d29922"),
+                line=dict(dash="dash", color="#f0d78c"),
             )
         )
         fig.update_layout(
@@ -644,7 +701,7 @@ with T_FC:
             margin=dict(t=20, b=10),
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#c9d1d9"),
+            font=dict(color="#e8d5a3"),
         )
         c2.plotly_chart(fig, use_container_width=True)
         m = c2.columns(4)
@@ -669,12 +726,12 @@ with T_MODE:
     df = pd.DataFrame(r)
     fig = go.Figure(
         [
-            go.Bar(x=df["mode"], y=df.freight_yuan, name="运费", marker_color="#58a6ff"),
+            go.Bar(x=df["mode"], y=df.freight_yuan, name="运费", marker_color="#c9a227"),
             go.Bar(
                 x=df["mode"],
                 y=df.total_cost_yuan - df.freight_yuan,
                 name="品质损耗折价",
-                marker_color="#d29922",
+                marker_color="#8b7355",
             ),
         ]
     )
@@ -685,7 +742,7 @@ with T_MODE:
         margin=dict(t=40, b=10),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#c9d1d9"),
+        font=dict(color="#e8d5a3"),
     )
     c2.plotly_chart(fig, use_container_width=True)
     c2.dataframe(
