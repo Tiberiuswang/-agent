@@ -1,20 +1,14 @@
-"""冷链运输优化工具集：纯 Python、无第三方依赖，可单独测试，也供智能体与网页共用。"""
+"""冷链运输优化工具集：纯 Python，可单独测试，也供智能体与网页共用。参数见 cn_params.py（含依据等级）。"""
 import itertools, math, random, statistics
+from cn_params import (PRODUCTS, VEHICLES, COST, MAX_CONT_DRIVE_MIN, REST_MIN, CITY_DELIVERY_SOFT_HOURS)
 
-# 货品档案：温区、设定温度、基准保质期(天)、Q10(温度每升10℃，变质速率放大倍数)——示意值，请按实际替换
-PRODUCTS = {
-    "vaccine":  {"name": "疫苗",     "lo": 2,   "hi": 8,   "set": 5,   "shelf": 365, "q10": 3.0},
-    "fresh":    {"name": "生鲜水产", "lo": 0,   "hi": 4,   "set": 2,   "shelf": 7,   "q10": 2.5},
-    "frozen":   {"name": "冷冻肉类", "lo": -25, "hi": -15, "set": -18, "shelf": 180, "q10": 2.2},
-    "icecream": {"name": "冰淇淋",   "lo": -30, "hi": -22, "set": -25, "shelf": 365, "q10": 2.0},
-}
-DEMO_STOPS = [  # win=时间窗(相对发车的分钟)，dwell=卸货停留分钟，demand=卸货量kg
-    {"name": "仓库", "lat": 31.23, "lng": 121.47, "win": [0, 9999], "dwell": 0, "demand": 0},
-    {"name": "浦东医院", "lat": 31.22, "lng": 121.54, "win": [30, 120], "dwell": 15, "demand": 300},
-    {"name": "徐汇超市", "lat": 31.19, "lng": 121.44, "win": [20, 90], "dwell": 20, "demand": 500},
-    {"name": "闵行门店", "lat": 31.11, "lng": 121.38, "win": [60, 180], "dwell": 15, "demand": 400},
-    {"name": "宝山配送站", "lat": 31.40, "lng": 121.49, "win": [90, 240], "dwell": 20, "demand": 600},
-    {"name": "嘉定餐厅", "lat": 31.38, "lng": 121.26, "win": [120, 260], "dwell": 15, "demand": 350},
+DEMO_STOPS = [  # win=时间窗(相对发车的分钟)，dwell=卸货停留分钟，demand=卸货量kg；坐标为GCJ-02(高德坐标系)，为示意位置
+    {"name": "仓库", "address": "上海市黄浦区人民广场", "lat": 31.2304, "lng": 121.4737, "win": [0, 9999], "dwell": 0, "demand": 0},
+    {"name": "浦东医院", "address": "上海市浦东新区世纪大道", "lat": 31.2220, "lng": 121.5440, "win": [30, 120], "dwell": 15, "demand": 300},
+    {"name": "徐汇超市", "address": "上海市徐汇区漕溪北路", "lat": 31.1930, "lng": 121.4370, "win": [20, 90], "dwell": 20, "demand": 500},
+    {"name": "闵行门店", "address": "上海市闵行区莘庄", "lat": 31.1110, "lng": 121.3820, "win": [60, 180], "dwell": 15, "demand": 400},
+    {"name": "宝山配送站", "address": "上海市宝山区淞宝路", "lat": 31.4000, "lng": 121.4900, "win": [90, 240], "dwell": 20, "demand": 600},
+    {"name": "嘉定餐厅", "address": "上海市嘉定区博乐路", "lat": 31.3800, "lng": 121.2600, "win": [120, 260], "dwell": 15, "demand": 350},
 ]
 
 def _prod(key):
@@ -26,13 +20,23 @@ def _km(a, b):
     p1, p2 = math.radians(a["lat"]), math.radians(b["lat"])
     dl = math.radians(b["lng"] - a["lng"])
     h = math.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
-    return 2 * 6371 * math.asin(math.sqrt(h)) * 1.3  # 1.3=路网曲折系数
+    return 2 * 6371 * math.asin(math.sqrt(h)) * 1.3  # 1.3=路网曲折系数(无高德数据时的估算)
 
 def _loss_rate(temp, p):  # 每分钟消耗的"等效保质期(天)"
     return p["q10"] ** ((temp - p["set"]) / 10) / 1440
 
-def _simulate(order, stops, p, ambient, speed, value, trace_on=False):
-    """逐分钟模拟：行驶/等待时制冷机拉回设定温度，开门作业时向环境温度升温。"""
+def _leg(a, b, ctx):
+    """两点间 (公里, 分钟, 过路费)。有高德矩阵用高德，否则直线×1.3÷车速。"""
+    r = ctx.get("road")
+    if r:
+        i, j = a["_i"], b["_i"]
+        return r["km"][i][j], r["min"][i][j] * ctx["veh"]["time_factor"], r["toll"][i][j] * ctx["veh"]["toll_factor"]
+    d = _km(a, b)
+    return d, d / ctx["spd"] * 60, 0.0
+
+def _simulate(order, stops, ctx, trace_on=False):
+    """逐分钟模拟：行驶/等待时制冷机拉回设定温度，开门作业时向环境温度升温；并核算成本构成与合规提示。"""
+    p, veh, c = ctx["p"], ctx["veh"], ctx["c"]
     S = {"t": 0, "temp": p["set"], "extra": 0.0, "out": 0, "peak": p["set"]}
     trace = [[0, p["set"]]]
     def tick(target, k):
@@ -41,29 +45,41 @@ def _simulate(order, stops, p, ambient, speed, value, trace_on=False):
         S["out"] += S["temp"] > p["hi"] or S["temp"] < p["lo"]
         S["peak"] = max(S["peak"], S["temp"])
         if trace_on: trace.append([S["t"], round(S["temp"], 2)])
-    km = late = 0.0; arr = []; cur = stops[order[0]]
+    km = late = tolls = 0.0; arr = []; cur = stops[order[0]]; run = maxrun = 0
     for idx in order[1:]:
-        s = stops[idx]; d = _km(cur, s); km += d
-        for _ in range(round(d / speed * 60)): tick(p["set"], 0.05)
+        s = stops[idx]; d, m, tl = _leg(cur, s, ctx); km += d; tolls += tl
+        for _ in range(round(m)): tick(p["set"], veh["recover_k"]); run += 1
+        maxrun = max(maxrun, run)
         arr.append([s["name"], S["t"]]); late += max(0, S["t"] - s["win"][1])
-        for _ in range(max(0, int(s["win"][0] - S["t"]))): tick(p["set"], 0.05)
-        for _ in range(int(s["dwell"])): tick(ambient, 0.012)
+        wait = max(0, int(s["win"][0] - S["t"]))
+        for _ in range(wait): tick(p["set"], veh["recover_k"])
+        for _ in range(int(s["dwell"])): tick(ctx["amb"], veh["door_k"])
+        if wait + s["dwell"] >= REST_MIN: run = 0  # 停车≥20分钟视为有效休息
         cur = s
     hours = S["t"] / 60; extra = max(S["extra"], 0)
-    cost = km * 4.5 + hours * 8 + late * 2 + extra / p["shelf"] * value
+    fixed_h = c["driver_per_h"] + (veh["price"] / c["life_years"] + veh["insurance"]) / c["hours_per_year"]
+    bd = {"燃油+保养": km * (veh["drive_l100"] / 100 * c["fuel_price"] + c["maint_per_km"]),
+          "制冷机组油耗": hours * veh["reefer_lph"] * c["fuel_price"],
+          "司机+折旧+保险": hours * fixed_h, "过路费": tolls, "迟到罚金": late * c["late_per_min"],
+          "品质损耗折价": extra / p["shelf"] * ctx["val"]}
+    warns = []
+    if maxrun > MAX_CONT_DRIVE_MIN: warns.append("连续驾驶超4小时且未停车休息≥20分钟，需插入休息（道路交通安全法实施条例第62条）")
+    if hours > CITY_DELIVERY_SOFT_HOURS: warns.append(f"单趟{hours:.1f}小时，超过同城配送建议的4~6小时，货品品质与迟到风险上升")
+    if S["out"]: warns.append(f"存在{S['out']}分钟超温，建议缩短单点卸货时间或拆分车次")
     r = {"km": round(km, 1), "hours": round(hours, 2), "late_min": round(late), "min_out_of_range": S["out"],
-         "peak_temp_c": round(S["peak"], 1), "lost_shelf_days": round(extra, 4),
-         "cost_yuan": round(cost, 1), "arrivals_min": arr}
+         "peak_temp_c": round(S["peak"], 1), "lost_shelf_days": round(extra, 4), "toll_yuan": round(tolls, 1),
+         "cost_yuan": round(sum(bd.values()), 1), "cost_breakdown": {k: round(v, 1) for k, v in bd.items()},
+         "arrivals_min": arr, "warnings": warns}
     if trace_on: r["trace"] = trace
     return r
 
-def _best_order(stops, p, amb, spd, val):
+def _best_order(stops, ctx):
     idx = list(range(1, len(stops)))
-    cost = lambda o: _simulate([0, *o], stops, p, amb, spd, val)["cost_yuan"]
+    cost = lambda o: _simulate([0, *o], stops, ctx)["cost_yuan"]
     if len(idx) <= 6: return list(min(itertools.permutations(idx), key=cost))  # 穷举
     order, left, cur = [], idx[:], 0  # 最近邻 + 两两交换改进
     while left:
-        nx = min(left, key=lambda j: _km(stops[cur], stops[j])); order.append(nx); left.remove(nx); cur = nx
+        nx = min(left, key=lambda j: _leg(stops[cur], stops[j], ctx)[1]); order.append(nx); left.remove(nx); cur = nx
     best = cost(order)
     for _ in range(2):
         for i, j in itertools.combinations(range(len(order)), 2):
@@ -84,28 +100,46 @@ def _groups(cust, depot, n, cap):
         if len(gs) <= n and all(sum(x.get("demand", 0) for x in g) <= cap for g in gs): return gs
     return None
 
-def optimize_delivery_route(product, stops=None, n_vehicles=1, capacity_kg=1e9, ambient_c=30,
-                            speed_kmh=40, cargo_value_yuan=50000, include_trace=False):
-    """冷链配送路线优化（单/多车）：按载重分车，再对每辆车的配送顺序求最优，
-    综合时间窗、开门升温、保质期损耗与成本；并给出与原始顺序的对比。stops[0]为仓库。"""
-    p = _prod(product)
+def optimize_delivery_route(product, stops=None, n_vehicles=1, vehicle="4.2m", capacity_kg=None, ambient_c=25,
+                            speed_kmh=30, cargo_value_yuan=50000, include_trace=False, costs=None,
+                            use_amap=False, road=None, _amap_key=None):
+    """冷链配送路线优化（单/多车）。stops[0]为仓库，坐标为高德GCJ-02。按载重分车，再对每辆车的配送顺序求最优，
+    综合：时间窗、开门升温、保质期损耗、油耗/冷机油耗/人工折旧/过路费/迟到罚金；对比原顺序。
+    use_amap=True 且提供Key时，用高德驾车路线规划的真实距离、耗时(含路况)和过路费；否则用直线×1.3÷车速估算。"""
+    p, veh = PRODUCTS.get(product), VEHICLES.get(vehicle)
     if not p: return _bad()
-    stops = stops or DEMO_STOPS
+    if not veh: return {"error": f"未知车型，可选：{list(VEHICLES)}"}
+    stops = [dict(s, _i=i) for i, s in enumerate(stops or DEMO_STOPS)]
     if len(stops) < 2: return {"error": "至少需要1个仓库和1个配送点"}
     for s in stops: s.setdefault("demand", 0)
-    gs = _groups(stops[1:], stops[0], int(n_vehicles), capacity_kg)
+    warnings, source = [], "直线距离×1.3÷车速（估算）"
+    if use_amap:
+        if not _amap_key: warnings.append("未提供高德Key，已改用估算距离")
+        else:
+            try:
+                import amap
+                road = amap.build_matrix(stops, _amap_key)
+                source = f"高德驾车路线规划（{road['calls']}次调用，含实时路况，小客车口径×车型系数）"
+            except Exception as e:  # 失败不中断：回退估算并提示
+                warnings.append(f"高德调用失败，已改用估算距离：{e}")
+    cap = capacity_kg or veh["payload"]
+    ctx = {"p": p, "veh": veh, "c": {**COST, **(costs or {})}, "amb": ambient_c, "spd": speed_kmh,
+           "val": cargo_value_yuan, "road": road}
+    gs = _groups(stops[1:], stops[0], int(n_vehicles), cap)
     if gs is None:
-        return {"error": f"载重不足：总需求{sum(s['demand'] for s in stops[1:])}kg，{n_vehicles}辆×{capacity_kg}kg装不下，请增加车辆或载重"}
+        return {"error": f"载重不足：总需求{sum(s['demand'] for s in stops[1:]):.0f}kg，{n_vehicles}辆×{cap:.0f}kg装不下，请增加车辆或换大车型"}
     vehicles, base_cost = [], 0.0
     for i, g in enumerate(gs, 1):
         sub = [stops[0], *g]
-        best = _best_order(sub, p, ambient_c, speed_kmh, cargo_value_yuan)
-        r = _simulate([0, *best], sub, p, ambient_c, speed_kmh, cargo_value_yuan, include_trace)
-        base_cost += _simulate(list(range(len(sub))), sub, p, ambient_c, speed_kmh, cargo_value_yuan)["cost_yuan"]
+        best = _best_order(sub, ctx)
+        r = _simulate([0, *best], sub, ctx, include_trace)
+        base_cost += _simulate(list(range(len(sub))), sub, ctx)["cost_yuan"]
         r.update(vehicle=i, load_kg=sum(s["demand"] for s in g), path=[sub[j]["name"] for j in best])
         vehicles.append(r)
     total = round(sum(v["cost_yuan"] for v in vehicles), 1)
-    return {"product": p["name"], "vehicles": vehicles, "total_cost_yuan": total,
+    bd = {k: round(sum(v["cost_breakdown"][k] for v in vehicles), 1) for k in vehicles[0]["cost_breakdown"]}
+    return {"product": p["name"], "vehicle_type": veh["name"], "road_source": source, "warnings": warnings,
+            "vehicles": vehicles, "total_cost_yuan": total, "cost_breakdown": bd,
             "baseline_cost_yuan": round(base_cost, 1), "saving_yuan": round(base_cost - total, 1),
             "total_km": round(sum(v["km"] for v in vehicles), 1)}
 
@@ -201,18 +235,22 @@ def forecast_replenishment(history, stock, lead_days=2, service_z=1.65, shelf_da
             "suggested_order_qty": round(qty), "need_reorder_now": stock <= rop,
             "capped_by_shelf_life": target - stock > cap}
 
-def compare_transport_modes(product, distance_km, weight_kg, cargo_value_yuan=50000, ambient_c=30):
-    """比较冷藏卡车/冷藏铁路/航空冷链的时效、总成本(运费+品质损耗折价)。"""
-    p = _prod(product)
+def compare_transport_modes(product, distance_km, weight_kg, cargo_value_yuan=50000, ambient_c=25):
+    """比较冷藏卡车/冷藏铁路/航空冷链的时效与总成本(运费+品质损耗折价)。
+    费率(元/吨·公里)为[估算]占位：公路参考行业测算(普通重卡0.35~0.45，冷链上浮至约0.7)，铁路/航空请填入实际询价。"""
+    p = PRODUCTS.get(product)
     if not p: return _bad()
-    modes = {"冷藏卡车": (60, 3.2, 5, .04), "冷藏铁路": (45, 1.6, 24, .04), "航空冷链": (700, 18.0, 6, .08)}
+    t = weight_kg / 1000
+    modes = {"冷藏卡车": (60, 0.75, 5, .04), "冷藏铁路": (45, 0.45, 24, .04), "航空冷链": (700, 10.0, 6, .08)}
     res = []
     for n, (spd, rate, fixed_h, k) in modes.items():
-        hrs = distance_km / spd + fixed_h
+        hrs = distance_km / spd + fixed_h + (distance_km / spd // 4) * REST_MIN / 60 * (n == "冷藏卡车")  # 公路含4小时休20分钟
         loss = max((_loss_rate(p["set"] + (ambient_c - p["set"]) * k, p) - 1 / 1440) * hrs * 60, 0)
-        res.append({"mode": n, "hours": round(hrs, 1), "freight_yuan": round(distance_km * weight_kg / 1000 * rate),
-                    "lost_shelf_days": round(loss, 4), "total_cost_yuan": round(distance_km * weight_kg / 1000 * rate + loss / p["shelf"] * cargo_value_yuan)})
-    return {"product": p["name"], "ranked_by_total_cost": sorted(res, key=lambda r: r["total_cost_yuan"])}
+        fr = distance_km * t * rate
+        res.append({"mode": n, "hours": round(hrs, 1), "freight_yuan": round(fr), "lost_shelf_days": round(loss, 4),
+                    "total_cost_yuan": round(fr + loss / p["shelf"] * cargo_value_yuan)})
+    return {"product": p["name"], "ranked_by_total_cost": sorted(res, key=lambda r: r["total_cost_yuan"]),
+            "note": "费率为估算占位，请替换为实际报价"}
 
 def simulate_temperature_log(product, minutes=240, scenario="normal", seed=1):
     """生成演示温度日志(每分钟)。scenario: normal / door_open(90分钟起开门25分钟) / compressor_fault(120分钟起机组失效)"""
@@ -227,7 +265,22 @@ def simulate_temperature_log(product, minutes=240, scenario="normal", seed=1):
         out.append({"t_min": t, "temp": round(T + rnd.uniform(-.15, .15), 2), "door_open": door})
     return out
 
+def geocode_address(address, city=None, _amap_key=None):
+    """地址转坐标(高德地理编码，GCJ-02)。"""
+    import amap
+    try: return amap.geocode(address, _amap_key, city)
+    except amap.AmapError as e: return {"error": str(e)}
+
+def get_weather(city, _amap_key=None):
+    """查询城市实时气温(高德天气)，可作为路线优化的环境温度。city可为城市名或adcode。"""
+    import amap
+    try:
+        ad = city if str(city).isdigit() else amap.geocode(city, _amap_key)["adcode"]
+        return amap.weather(ad, _amap_key)
+    except amap.AmapError as e: return {"error": str(e)}
+
 def list_products(): return PRODUCTS
+def list_vehicles(): return VEHICLES
 def get_demo_stops(): return DEMO_STOPS
 
 # ---- 工具声明(OpenAI/智谱 function calling) ----
@@ -238,8 +291,12 @@ _PK = {"type": "string", "enum": list(PRODUCTS)}
 _STOP = _o({"name": _s, "lat": _n, "lng": _n, "win": _arr(_n), "dwell": _n, "demand": _n}, ["name", "lat", "lng", "win", "dwell"])
 _RD = _o({"t_min": _n, "temp": _n, "door_open": {"type": "boolean"}}, ["t_min", "temp"])
 SPEC = [
- {"name": "optimize_delivery_route", "description": "冷链配送路线优化(支持多车、载重、时间窗、开门升温、保质期损耗)。stops第一个为仓库；不传stops用演示数据；win为相对发车的分钟时间窗。",
-  "parameters": _o({"product": _PK, "stops": _arr(_STOP), "n_vehicles": _n, "capacity_kg": _n, "ambient_c": _n, "speed_kmh": _n, "cargo_value_yuan": _n}, ["product"])},
+ {"name": "optimize_delivery_route", "description": "冷链配送路线优化(多车、载重、时间窗、开门升温、保质期损耗、中国成本模型)。stops第一个为仓库，坐标为高德GCJ-02；不传stops用演示数据；win为相对发车的分钟时间窗。use_amap=true 用高德真实路况。",
+  "parameters": _o({"product": _PK, "stops": _arr(_STOP), "n_vehicles": _n, "vehicle": {"type": "string", "enum": list(VEHICLES)}, "capacity_kg": _n,
+                    "ambient_c": _n, "speed_kmh": _n, "cargo_value_yuan": _n, "use_amap": {"type": "boolean"}}, ["product"])},
+ {"name": "geocode_address", "description": "地址转经纬度(高德)。", "parameters": _o({"address": _s, "city": _s}, ["address"])},
+ {"name": "get_weather", "description": "查询城市实时气温(高德)，用作环境温度。", "parameters": _o({"city": _s}, ["city"])},
+ {"name": "list_vehicles", "description": "列出冷藏车型参数。", "parameters": _o({})},
  {"name": "assess_temperature_log", "description": "分析一段完整温度日志：超温时长、保质期损耗、放行/暂扣建议。",
   "parameters": _o({"product": _PK, "log": _arr(_RD)}, ["product", "log"])},
  {"name": "temperature_alerts", "description": "对截至当前的温度读数做实时告警：越限、趋势预测、开门过久、累计超温。",
@@ -255,4 +312,6 @@ SPEC = [
  {"name": "get_demo_stops", "description": "获取上海演示配送点。", "parameters": _o({})},
 ]
 REGISTRY = {f.__name__: f for f in (optimize_delivery_route, assess_temperature_log, temperature_alerts, fefo_inventory,
-                                    forecast_replenishment, compare_transport_modes, list_products, get_demo_stops)}
+                                    forecast_replenishment, compare_transport_modes, list_products, list_vehicles,
+                                    get_demo_stops, geocode_address, get_weather)}
+NEEDS_KEY = {"optimize_delivery_route", "geocode_address", "get_weather"}  # 这些工具由系统注入高德Key，模型看不到

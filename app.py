@@ -3,33 +3,37 @@ import json
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-import tools
-from tools import PRODUCTS
+import amap, tools
+from cn_params import COST_NOTES
+from tools import PRODUCTS, VEHICLES, COST
 
 st.set_page_config(page_title="冷链优化智能体", page_icon="🧊", layout="wide")
 PK = list(PRODUCTS)
 fmt = lambda k: f"{PRODUCTS[k]['name']}  {PRODUCTS[k]['lo']}~{PRODUCTS[k]['hi']}℃"
-COLS = ["name", "lat", "lng", "win_start", "win_end", "dwell", "demand"]
+COLS = ["name", "address", "lat", "lng", "win_start", "win_end", "dwell", "demand"]
 COLORS = ["#1f77b4", "#d62728", "#2ca02c", "#ff7f0e", "#9467bd", "#8c564b"]
 
 def to_df(stops):
-    return pd.DataFrame([[s["name"], s["lat"], s["lng"], s["win"][0], s["win"][1], s["dwell"], s.get("demand", 0)] for s in stops], columns=COLS)
+    return pd.DataFrame([[s["name"], s.get("address", ""), s["lat"], s["lng"], s["win"][0], s["win"][1], s["dwell"], s.get("demand", 0)] for s in stops], columns=COLS)
 
 def to_stops(df):
     nz = lambda v, d: d if pd.isna(v) else float(v)  # 新增行的空单元格给默认值
-    df = df.dropna(subset=["name", "lat", "lng"])
-    return [{"name": str(r.name_), "lat": float(r.lat), "lng": float(r.lng), "win": [nz(r.win_start, 0), nz(r.win_end, 9999)],
-             "dwell": nz(r.dwell, 0), "demand": nz(r.demand, 0)} for r in df.rename(columns={"name": "name_"}).itertuples()]
+    df = df.dropna(subset=["name"])
+    miss = df[df.lat.isna() | df.lng.isna()]
+    if len(miss): raise ValueError(f"「{'、'.join(map(str, miss['name']))}」缺少坐标：请填地址后点「地址→坐标」，或手动填经纬度（高德GCJ-02）")
+    return [{"name": str(r.name_), "address": "" if pd.isna(r.address) else str(r.address), "lat": float(r.lat), "lng": float(r.lng),
+             "win": [nz(r.win_start, 0), nz(r.win_end, 9999)], "dwell": nz(r.dwell, 0), "demand": nz(r.demand, 0)}
+            for r in df.rename(columns={"name": "name_"}).itertuples()]
 
 PRESETS = {
-    "💉 疫苗配送 · 上海": dict(product="vaccine", ambient=30, nveh=2, cap=1200, stops=tools.DEMO_STOPS),
-    "🐟 生鲜日配 · 广州": dict(product="fresh", ambient=34, nveh=1, cap=2000, stops=[
+    "💉 疫苗配送 · 上海": dict(product="vaccine", ambient=25, nveh=2, veh="4.2m", cap=1500, stops=tools.DEMO_STOPS),
+    "🐟 生鲜日配 · 广州": dict(product="fresh", ambient=30, nveh=1, veh="4.2m", cap=1500, stops=[
         {"name": "中心仓", "lat": 23.13, "lng": 113.26, "win": [0, 9999], "dwell": 0, "demand": 0},
         {"name": "天河超市", "lat": 23.14, "lng": 113.36, "win": [20, 100], "dwell": 15, "demand": 400},
         {"name": "越秀菜场", "lat": 23.12, "lng": 113.24, "win": [10, 70], "dwell": 15, "demand": 300},
         {"name": "番禺门店", "lat": 22.94, "lng": 113.35, "win": [60, 160], "dwell": 15, "demand": 350},
         {"name": "白云餐厅", "lat": 23.25, "lng": 113.28, "win": [40, 140], "dwell": 10, "demand": 250}]),
-    "🥩 冷冻肉配送 · 北京": dict(product="frozen", ambient=28, nveh=1, cap=3000, stops=[
+    "🥩 冷冻肉配送 · 北京": dict(product="frozen", ambient=15, nveh=1, veh="6.8m", cap=6000, stops=[
         {"name": "冷库", "lat": 39.90, "lng": 116.40, "win": [0, 9999], "dwell": 0, "demand": 0},
         {"name": "朝阳批发", "lat": 39.92, "lng": 116.50, "win": [20, 120], "dwell": 25, "demand": 900},
         {"name": "海淀超市", "lat": 39.99, "lng": 116.30, "win": [30, 150], "dwell": 20, "demand": 700},
@@ -38,12 +42,20 @@ PRESETS = {
 
 def load_preset(name):
     p = PRESETS[name]
-    st.session_state.update(product=p["product"], ambient=p["ambient"], nveh=p["nveh"], cap=p["cap"],
+    st.session_state.update(product=p["product"], ambient=p["ambient"], nveh=p["nveh"], veh=p["veh"], cap=p["cap"],
                             stops_df=to_df(p["stops"]), ver=st.session_state.get("ver", 0) + 1, route_res=None)
 
 if "stops_df" not in st.session_state:
     load_preset("💉 疫苗配送 · 上海")
-    st.session_state.update(speed=40, val=50000, hist=None, msgs=[], log=None)
+    st.session_state.update(speed=30, val=50000, hist=None, msgs=[], log=None, wmsg="", c_fuel=COST["fuel_price"], c_driver=COST["driver_per_h"], c_late=COST["late_per_min"])
+
+def fetch_weather(city, key):
+    try:
+        g = amap.geocode(city, key); w = amap.weather(g["adcode"], key)
+        st.session_state.ambient = int(max(-20, min(45, round(w["temp"]))))
+        st.session_state.wmsg = f"{w['city']} {w['weather']} {w['temp']:.0f}℃（{w['time']}）"
+    except amap.AmapError as e:
+        st.session_state.wmsg = f"获取失败：{e}"
 
 def band(fig, p):  # 温区色带
     fig.add_hrect(y0=p["lo"], y1=p["hi"], fillcolor="green", opacity=0.12, line_width=0, annotation_text="合规温区")
@@ -57,9 +69,14 @@ with st.sidebar:
     except Exception: default_key = ""
     api_key = st.text_input("智谱 API Key", value=default_key, type="password", help="仅用于「智能体」页，不会被保存")
     model = st.text_input("模型编码", value="glm-5.3-flash", help="以智谱开放平台控制台显示为准")
-    st.caption("所有计算工具在本地运行；只有「智能体」页会调用大模型。")
+    try: default_amap = st.secrets.get("AMAP_KEY", "")
+    except Exception: default_amap = ""
+    amap_key = st.text_input("高德 Web服务 Key", value=default_amap, type="password", help="高德开放平台创建应用→添加Key→服务平台选「Web服务」")
+    city = st.text_input("城市（地址解析/天气）", value="上海")
+    use_amap = st.checkbox("路线用高德真实路况", value=bool(amap_key), help="关闭则用直线×1.3÷车速估算，不消耗高德额度")
+    st.caption("计算在本地；只有「智能体」页调用大模型，高德Key只用于请求高德，不会保存。")
 
-T_ROUTE, T_TEMP, T_INV, T_FC, T_MODE, T_AGENT = st.tabs(["🚚 路线优化", "🌡️ 温度监控", "🧊 库存效期", "📈 需求补货", "✈️ 运输方式", "🤖 智能体"])
+T_ROUTE, T_TEMP, T_INV, T_FC, T_MODE, T_AGENT, T_PARAM = st.tabs(["🚚 路线优化", "🌡️ 温度监控", "🧊 库存效期", "📈 需求补货", "✈️ 运输方式", "🤖 智能体", "⚙️ 参数依据"])
 product = st.session_state.product
 p = PRODUCTS[product]
 
@@ -67,27 +84,54 @@ p = PRODUCTS[product]
 with T_ROUTE:
     a, b = st.columns([1, 2])
     with a:
-        st.radio("① 货品", PK, format_func=fmt, key="product")
-        st.slider("② 环境温度 ℃", 0, 45, key="ambient")
-        st.slider("③ 车速 km/h", 20, 80, key="speed")
-        st.number_input("④ 车辆数", 1, 6, key="nveh")
-        st.number_input("单车载重 kg", 100, 20000, step=100, key="cap")
+        st.selectbox("① 货品", PK, format_func=fmt, key="product")
+        st.selectbox("② 车型", list(VEHICLES), format_func=lambda k: VEHICLES[k]["name"], key="veh",
+                     on_change=lambda: st.session_state.update(cap=VEHICLES[st.session_state.veh]["payload"]))
+        st.number_input("单车载重 kg", 100, 30000, step=100, key="cap")
+        st.number_input("③ 车辆数", 1, 6, key="nveh")
+        st.slider("④ 环境温度 ℃", -20, 45, key="ambient")
+        st.button("🌤 用高德天气填入当前气温", on_click=fetch_weather, args=(city, amap_key), disabled=not amap_key, use_container_width=True)
+        if st.session_state.wmsg: st.caption(st.session_state.wmsg)
         st.number_input("货值 元", 1000, 5000000, step=5000, key="val")
+        st.slider("无高德时的估算车速 km/h", 15, 60, key="speed")
+        with st.expander("💰 成本参数（按你们实际改）"):
+            st.number_input("柴油 元/升", 5.0, 15.0, step=0.1, key="c_fuel", help=COST_NOTES["fuel_price"])
+            st.number_input("司机 元/小时", 10.0, 100.0, step=1.0, key="c_driver")
+            st.number_input("迟到罚金 元/分钟", 0.0, 50.0, step=0.5, key="c_late")
     with b:
-        st.markdown("**⑤ 配送点**（第 1 行=仓库起点；点表格底部 ➕ 增行，选中行按 Delete 删除；时间窗为发车后的分钟数）")
+        st.markdown("**⑤ 配送点**（第 1 行=仓库；填「地址」后点下方按钮自动补坐标；时间窗为发车后分钟数；表格底部 ➕ 增行）")
         edited = st.data_editor(st.session_state.stops_df, num_rows="dynamic", use_container_width=True, key=f"ed{st.session_state.ver}",
-                                column_config={"name": "名称", "lat": st.column_config.NumberColumn("纬度", format="%.4f"),
-                                               "lng": st.column_config.NumberColumn("经度", format="%.4f"),
+                                column_config={"name": "名称", "address": "地址", "lat": st.column_config.NumberColumn("纬度", format="%.5f"),
+                                               "lng": st.column_config.NumberColumn("经度", format="%.5f"),
                                                "win_start": "最早到(分)", "win_end": "最晚到(分)", "dwell": "卸货(分)", "demand": "卸货量(kg)"})
-        if st.button("🚀 开始优化", type="primary", use_container_width=True):
-            stops = to_stops(edited)
-            st.session_state.route_stops = stops
-            st.session_state.route_res = tools.optimize_delivery_route(
-                st.session_state.product, stops, st.session_state.nveh, st.session_state.cap, st.session_state.ambient,
-                st.session_state.speed, st.session_state.val, include_trace=True)
+        g1, g2 = st.columns(2)
+        if g1.button("📍 地址→坐标（高德）", use_container_width=True):
+            if not amap_key: st.error("请先在左侧填高德Key")
+            else:
+                try:
+                    df, n = edited.copy(), 0
+                    for i, r in df.iterrows():
+                        if str(r.get("address") or "").strip() and (pd.isna(r.lat) or pd.isna(r.lng)):
+                            g = amap.geocode(str(r.address), amap_key, city); df.loc[i, ["lat", "lng"]] = [g["lat"], g["lng"]]; n += 1
+                    st.session_state.stops_df = df; st.session_state.ver += 1; st.session_state.wmsg = f"已补全 {n} 个坐标"; st.rerun()
+                except amap.AmapError as e: st.error(str(e))
+        if g2.button("🚀 开始优化", type="primary", use_container_width=True):
+            try:
+                stops = to_stops(edited)
+                st.session_state.route_stops = stops
+                st.session_state.route_res = tools.optimize_delivery_route(
+                    st.session_state.product, stops, st.session_state.nveh, st.session_state.veh, st.session_state.cap, st.session_state.ambient,
+                    st.session_state.speed, st.session_state.val, include_trace=True,
+                    costs={"fuel_price": st.session_state.c_fuel, "driver_per_h": st.session_state.c_driver, "late_per_min": st.session_state.c_late},
+                    use_amap=use_amap, _amap_key=amap_key or None)
+            except ValueError as e: st.error(str(e)); st.session_state.route_res = None
     res, stops = st.session_state.get("route_res"), st.session_state.get("route_stops")
     if res and "error" in res: st.error(res["error"])
     elif res:
+        st.caption(f"{res['vehicle_type']} · 距离/耗时来源：{res['road_source']}")
+        for w in res["warnings"]: st.warning(w)
+        for v in res["vehicles"]:
+            for w in v["warnings"]: st.warning(f"车{v['vehicle']}：{w}")
         m = st.columns(4)
         m[0].metric("优化后总成本", f"¥{res['total_cost_yuan']:,.0f}", f"{-res['saving_yuan']:+,.0f} 元 vs 原顺序", delta_color="inverse")
         m[1].metric("总里程", f"{res['total_km']} km")
@@ -113,8 +157,12 @@ with T_ROUTE:
         fb = go.Figure(go.Bar(x=["原始顺序", "优化后"], y=[res["baseline_cost_yuan"], res["total_cost_yuan"]], marker_color=["#999", "#2ca02c"], text=[f"¥{res['baseline_cost_yuan']:,.0f}", f"¥{res['total_cost_yuan']:,.0f}"]))
         fb.update_layout(title="成本对比（运输+制冷+迟到罚金+品质损耗折价）", height=260, margin=dict(t=40, b=10))
         c1.plotly_chart(fb, use_container_width=True)
+        bd = res["cost_breakdown"]
+        fc = go.Figure(go.Bar(x=list(bd.values()), y=list(bd.keys()), orientation="h", text=[f"¥{v:,.0f}" for v in bd.values()]))
+        fc.update_layout(title="成本构成", height=260, margin=dict(t=40, b=10), yaxis_autorange="reversed")
+        c2.plotly_chart(fc, use_container_width=True)
         c2.dataframe(pd.DataFrame([{"车": v["vehicle"], "路线": " → ".join(v["path"]), "里程km": v["km"], "用时h": v["hours"], "超温分钟": v["min_out_of_range"],
-                                     "峰值℃": v["peak_temp_c"], "损耗保质期(天)": v["lost_shelf_days"], "成本¥": v["cost_yuan"]} for v in res["vehicles"]]), use_container_width=True, hide_index=True)
+                                     "峰值℃": v["peak_temp_c"], "过路费¥": v["toll_yuan"], "损耗保质期(天)": v["lost_shelf_days"], "成本¥": v["cost_yuan"]} for v in res["vehicles"]]), use_container_width=True, hide_index=True)
 
 # ---------------- 温度监控 ----------------
 with T_TEMP:
@@ -221,16 +269,28 @@ with T_AGENT:
             full = q
             if ctx and st.session_state.get("route_res"):
                 full += "\n\n【当前页面方案】" + json.dumps({"product": product, "ambient_c": st.session_state.ambient, "stops": st.session_state.route_stops,
-                        "n_vehicles": st.session_state.nveh, "capacity_kg": st.session_state.cap, "result": [{k: v[k] for k in ("vehicle", "path", "km", "hours", "late_min", "min_out_of_range", "cost_yuan")} for v in st.session_state.route_res["vehicles"]]}, ensure_ascii=False)
+                        "n_vehicles": st.session_state.nveh, "vehicle": st.session_state.veh, "capacity_kg": st.session_state.cap, "result": [{k: v[k] for k in ("vehicle", "path", "km", "hours", "late_min", "min_out_of_range", "cost_yuan")} for v in st.session_state.route_res["vehicles"]]}, ensure_ascii=False)
             st.session_state.msgs.append({"role": "user", "content": q})
             with st.chat_message("user"): st.markdown(q)
             used = []
             with st.chat_message("assistant"), st.spinner("思考中…"):
                 try:
                     st.session_state.hist.append({"role": "user", "content": full})
-                    ans = agent.chat(st.session_state.hist, agent.make_client(api_key), model, on_tool=lambda n, a, r_: used.append(f"{n}({json.dumps(a, ensure_ascii=False)[:60]}…)"))
+                    ans = agent.chat(st.session_state.hist, agent.make_client(api_key), model, secrets={"amap_key": amap_key}, on_tool=lambda n, a, r_: used.append(f"{n}({json.dumps(a, ensure_ascii=False)[:60]}…)"))
                 except Exception as e:
                     ans = f"调用失败：{e}"; st.session_state.hist.pop()
                 st.markdown(ans)
                 for t in used: st.caption(f"🔧 {t}")
             st.session_state.msgs.append({"role": "assistant", "content": ans, "tools": used})
+
+# ---------------- 参数依据 ----------------
+with T_PARAM:
+    st.markdown("**依据等级**：`[标准]` 国标/行标/团标条文　`[政策]` 官方公布　`[行业]` 行业惯例　`[估算]` 本项目假设——**必须用你们自己的数据校准**")
+    st.subheader("货品温区")
+    st.dataframe(pd.DataFrame([{"货品": v["name"], "允许温区℃": f"{v['lo']}~{v['hi']}", "机组设定℃": v["set"], "基准保质期(天)": v["shelf"], "Q10": v["q10"], "依据": v["basis"]} for v in PRODUCTS.values()]), hide_index=True, use_container_width=True)
+    st.subheader("冷藏车型")
+    st.dataframe(pd.DataFrame([{"车型": v["name"], "载重kg": v["payload"], "行驶油耗L/100km": v["drive_l100"], "冷机L/小时": v["reefer_lph"], "车价¥": v["price"], "依据": v["basis"]} for v in VEHICLES.values()]), hide_index=True, use_container_width=True)
+    st.subheader("成本参数")
+    st.dataframe(pd.DataFrame([{"参数": k, "默认值": COST[k], "说明与依据": COST_NOTES[k]} for k in COST]), hide_index=True, use_container_width=True)
+    st.info("合规提示：连续驾驶超 4 小时须停车休息 ≥20 分钟（《道路交通安全法实施条例》第62条）；同城配送建议 4~6 小时内（团标）。"
+            "高德距离/耗时为小客车口径，本工具按车型加时长与过路费系数；城市货车限行、限高限重需用高德货车路径规划接口另行校验。")
