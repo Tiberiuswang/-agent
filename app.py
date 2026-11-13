@@ -3,6 +3,8 @@ import json
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+import folium
+from streamlit_folium import st_folium
 import amap, tools
 from cn_params import COST_NOTES
 from tools import PRODUCTS, VEHICLES, COST
@@ -137,6 +139,54 @@ def fetch_weather(city, key):
     except amap.AmapError as e:
         st.session_state.wmsg = f"天气获取失败：{e}"
 
+def fetch_weather_from_stops(stops, key):
+    """根据仓库或首个点自动取当地气温。"""
+    if not stops or not key:
+        return
+    try:
+        s0 = stops[0]
+        r = amap.regeo(s0["lng"], s0["lat"], key)
+        adcode = r.get("adcode")
+        if not adcode:
+            city = r.get("city") or st.session_state.get("city", "上海")
+            g = amap.geocode(city, key)
+            adcode = g["adcode"]
+        w = amap.weather(adcode, key)
+        st.session_state.ambient = int(max(-20, min(45, round(w["temp"]))))
+        st.session_state.wmsg = f"{w.get('city') or r.get('city') or ''} {w['weather']} {w['temp']:.0f}℃ · 已自动填入"
+    except Exception as e:
+        st.session_state.wmsg = f"天气获取失败：{e}"
+
+def build_map(stops, center=None, zoom=11):
+    if stops:
+        clat = sum(s["lat"] for s in stops) / len(stops)
+        clng = sum(s["lng"] for s in stops) / len(stops)
+    else:
+        clat, clng = 31.23, 121.47
+    if center:
+        clat, clng = center
+    m = folium.Map(location=[clat, clng], zoom_start=zoom, tiles=None, control_scale=True)
+    # 高德路网瓦片（GCJ-02，与坐标一致）
+    folium.TileLayer(
+        tiles="https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}",
+        attr="高德",
+        name="高德地图",
+        subdomains="1234",
+        max_zoom=18,
+    ).add_to(m)
+    for i, s in enumerate(stops or []):
+        color = "red" if i == 0 else "blue"
+        folium.Marker(
+            [s["lat"], s["lng"]],
+            popup=folium.Popup(f"<b>{s['name']}</b><br>{s.get('address','')}", max_width=220),
+            tooltip=f"{'仓库' if i==0 else i}. {s['name']}",
+            icon=folium.Icon(color=color, icon="home" if i == 0 else "info-sign"),
+        ).add_to(m)
+    if len(stops or []) >= 2:
+        folium.PolyLine([[s["lat"], s["lng"]] for s in stops], color="#1f77b4", weight=3, opacity=0.7).add_to(m)
+    m.add_child(folium.LatLngPopup())
+    return m
+
 def band(fig, p):
     fig.add_hrect(
         y0=p["lo"], y1=p["hi"],
@@ -195,8 +245,9 @@ with T_ROUTE:
     mode_label = "城市配送" if current_mode == "urban" else "干线运输"
     st.markdown(f"**当前模式：{mode_label}**")
 
-    a, b = st.columns([1, 2], gap="large")
-    with a:
+    # 左侧参数 + 右侧地图
+    left, right = st.columns([1, 1.4], gap="large")
+    with left:
         st.selectbox("货品", PK, format_func=fmt, key="product")
         st.selectbox(
             "车型",
@@ -208,7 +259,15 @@ with T_ROUTE:
         st.number_input("单车载重 kg", 100, 30000, step=100, key="cap")
         st.number_input("车辆数", 1, 6, key="nveh")
         st.slider("环境温度 ℃", -20, 45, key="ambient")
-        if st.button("获取当前气温", use_container_width=True, disabled=not amap_key):
+        cwa, cwb = st.columns(2)
+        if cwa.button("按仓库位置取气温", use_container_width=True, disabled=not amap_key):
+            try:
+                tmp = to_stops(st.session_state.stops_df)
+                fetch_weather_from_stops(tmp, amap_key)
+                st.rerun()
+            except Exception as e:
+                st.session_state.wmsg = str(e)
+        if cwb.button("按城市取气温", use_container_width=True, disabled=not amap_key):
             fetch_weather(city, amap_key)
             st.rerun()
         if st.session_state.wmsg:
@@ -220,71 +279,170 @@ with T_ROUTE:
             st.number_input("司机 元/小时", 10.0, 100.0, step=1.0, key="c_driver")
             st.number_input("迟到罚金 元/分钟", 0.0, 50.0, step=0.5, key="c_late")
 
-    with b:
-        if current_mode == "urban":
-            st.markdown("**配送点** · 第 1 行为仓库，时间窗为发车后分钟数")
-        else:
-            st.markdown("**起终点** · 第 1 行为发货冷库，其余为中转或收货点")
+    with right:
+        st.caption("点击地图添加地点 · 第 1 个点为仓库")
+        try:
+            preview_stops = to_stops(st.session_state.stops_df) if len(st.session_state.stops_df) else []
+        except Exception:
+            preview_stops = []
+            for _, r in st.session_state.stops_df.iterrows():
+                if pd.notna(r.get("lat")) and pd.notna(r.get("lng")):
+                    preview_stops.append({"name": r.get("name") or "点", "lat": float(r.lat), "lng": float(r.lng), "address": r.get("address") or ""})
+        fmap = build_map(preview_stops)
+        map_out = st_folium(fmap, height=380, width=None, returned_objects=["last_clicked"], key=f"fmap_{st.session_state.get('ver', 0)}")
+        if map_out and map_out.get("last_clicked"):
+            clk = map_out["last_clicked"]
+            clat, clng = clk["lat"], clk["lng"]
+            # 避免重复触发同一点击
+            last = st.session_state.get("_last_click")
+            if last != (round(clat, 5), round(clng, 5)):
+                st.session_state._last_click = (round(clat, 5), round(clng, 5))
+                name, addr = f"点{len(st.session_state.stops_df)+1}", ""
+                if amap_key:
+                    try:
+                        rg = amap.regeo(clng, clat, amap_key)
+                        name = rg.get("name") or name
+                        addr = rg.get("address") or ""
+                    except Exception:
+                        pass
+                is_first = len(st.session_state.stops_df) == 0
+                new_row = {
+                    "name": "仓库" if is_first else name,
+                    "address": addr,
+                    "lat": clat,
+                    "lng": clng,
+                    "win_start": 0 if is_first else 30,
+                    "win_end": 9999 if is_first else 240,
+                    "dwell": 0 if is_first else 15,
+                    "demand": 0 if is_first else 300,
+                }
+                st.session_state.stops_df = pd.concat([st.session_state.stops_df, pd.DataFrame([new_row])], ignore_index=True)
+                st.session_state.ver = st.session_state.get("ver", 0) + 1
+                # 首次落点自动取气温
+                if is_first and amap_key:
+                    fetch_weather_from_stops([{"lat": clat, "lng": clng}], amap_key)
+                st.rerun()
 
-        edited = st.data_editor(
-            st.session_state.stops_df,
-            num_rows="dynamic",
-            use_container_width=True,
-            key=f"ed{st.session_state.ver}",
-            column_config={
-                "name": "名称",
-                "address": "地址",
-                "lat": st.column_config.NumberColumn("纬度", format="%.5f"),
-                "lng": st.column_config.NumberColumn("经度", format="%.5f"),
-                "win_start": "最早到",
-                "win_end": "最晚到",
-                "dwell": "停留",
-                "demand": "货量 kg",
-            },
-        )
-        g1, g2 = st.columns(2)
-        if g1.button("地址解析坐标", use_container_width=True):
-            if not amap_key:
-                st.error("高德 Key 不可用")
-            else:
-                try:
-                    df, n = edited.copy(), 0
-                    for i, r in df.iterrows():
-                        if str(r.get("address") or "").strip() and (pd.isna(r.lat) or pd.isna(r.lng)):
-                            g = amap.geocode(str(r.address), amap_key, city)
-                            df.loc[i, ["lat", "lng"]] = [g["lat"], g["lng"]]
-                            n += 1
-                    st.session_state.stops_df = df
-                    st.session_state.ver += 1
-                    st.session_state.wmsg = f"已解析 {n} 个地址"
-                    st.rerun()
-                except amap.AmapError as e:
-                    st.error(str(e))
-        if g2.button("开始优化", type="primary", use_container_width=True):
+    st.markdown("---")
+    # 搜索添加
+    s1, s2, s3 = st.columns([3, 1, 1])
+    q_place = s1.text_input("搜索地点并添加", placeholder="例如：上海浦东医院 / 武汉东西湖冷库", label_visibility="collapsed")
+    if s2.button("搜索添加", use_container_width=True):
+        if not q_place.strip():
+            st.warning("请输入地点名称")
+        elif not amap_key:
+            st.error("高德 Key 不可用")
+        else:
             try:
-                stops = to_stops(edited)
-                st.session_state.route_stops = stops
-                st.session_state.route_res = tools.optimize_delivery_route(
-                    st.session_state.product,
-                    stops,
-                    st.session_state.nveh,
-                    st.session_state.veh,
-                    st.session_state.cap,
-                    st.session_state.ambient,
-                    st.session_state.speed,
-                    st.session_state.val,
-                    include_trace=True,
-                    costs={
-                        "fuel_price": st.session_state.c_fuel,
-                        "driver_per_h": st.session_state.c_driver,
-                        "late_per_min": st.session_state.c_late,
-                    },
-                    use_amap=use_amap,
-                    _amap_key=amap_key or None,
-                )
-            except ValueError as e:
+                g = amap.geocode(q_place.strip(), amap_key, city)
+                is_first = len(st.session_state.stops_df) == 0
+                new_row = {
+                    "name": g.get("formatted") or q_place.strip()[:20],
+                    "address": g.get("formatted") or q_place.strip(),
+                    "lat": g["lat"],
+                    "lng": g["lng"],
+                    "win_start": 0 if is_first else 30,
+                    "win_end": 9999 if is_first else 240,
+                    "dwell": 0 if is_first else 15,
+                    "demand": 0 if is_first else 300,
+                }
+                # 名称尽量短一点
+                nm = q_place.strip()
+                if len(nm) <= 16:
+                    new_row["name"] = "仓库" if is_first else nm
+                st.session_state.stops_df = pd.concat([st.session_state.stops_df, pd.DataFrame([new_row])], ignore_index=True)
+                st.session_state.ver = st.session_state.get("ver", 0) + 1
+                if is_first:
+                    fetch_weather_from_stops([{"lat": g["lat"], "lng": g["lng"]}], amap_key)
+                st.rerun()
+            except amap.AmapError as e:
                 st.error(str(e))
-                st.session_state.route_res = None
+    if s3.button("清空地点", use_container_width=True):
+        st.session_state.stops_df = pd.DataFrame(columns=COLS)
+        st.session_state.ver = st.session_state.get("ver", 0) + 1
+        st.session_state.route_res = None
+        st.rerun()
+
+    if current_mode == "urban":
+        st.markdown("**配送点表格** · 第 1 行为仓库，可直接改名称/地址/时间窗/货量")
+    else:
+        st.markdown("**起终点表格** · 第 1 行为发货冷库")
+
+    edited = st.data_editor(
+        st.session_state.stops_df,
+        num_rows="dynamic",
+        use_container_width=True,
+        key=f"ed{st.session_state.ver}",
+        column_config={
+            "name": "名称",
+            "address": "地址",
+            "lat": st.column_config.NumberColumn("纬度", format="%.5f"),
+            "lng": st.column_config.NumberColumn("经度", format="%.5f"),
+            "win_start": "最早到",
+            "win_end": "最晚到",
+            "dwell": "停留",
+            "demand": "货量 kg",
+        },
+    )
+    # sync edits back when user changes table without other actions
+    st.session_state.stops_df = edited
+
+    g1, g2, g3 = st.columns(3)
+    if g1.button("地址解析坐标", use_container_width=True):
+        if not amap_key:
+            st.error("高德 Key 不可用")
+        else:
+            try:
+                df, n = edited.copy(), 0
+                for i, r in df.iterrows():
+                    if str(r.get("address") or "").strip() and (pd.isna(r.lat) or pd.isna(r.lng)):
+                        g = amap.geocode(str(r.address), amap_key, city)
+                        df.loc[i, ["lat", "lng"]] = [g["lat"], g["lng"]]
+                        n += 1
+                    elif str(r.get("name") or "").strip() and (pd.isna(r.lat) or pd.isna(r.lng)):
+                        g = amap.geocode(str(r.name), amap_key, city)
+                        df.loc[i, ["lat", "lng", "address"]] = [g["lat"], g["lng"], g.get("formatted") or r.get("address")]
+                        n += 1
+                st.session_state.stops_df = df
+                st.session_state.ver += 1
+                st.session_state.wmsg = f"已解析 {n} 个地址"
+                st.rerun()
+            except amap.AmapError as e:
+                st.error(str(e))
+    if g2.button("自动填气温", use_container_width=True, disabled=not amap_key):
+        try:
+            fetch_weather_from_stops(to_stops(edited), amap_key)
+            st.rerun()
+        except Exception as e:
+            st.error(str(e))
+    if g3.button("开始优化", type="primary", use_container_width=True):
+        try:
+            stops = to_stops(edited)
+            st.session_state.route_stops = stops
+            # 优化前若未手动改温，可再刷一次
+            if amap_key and not st.session_state.wmsg:
+                fetch_weather_from_stops(stops, amap_key)
+            st.session_state.route_res = tools.optimize_delivery_route(
+                st.session_state.product,
+                stops,
+                st.session_state.nveh,
+                st.session_state.veh,
+                st.session_state.cap,
+                st.session_state.ambient,
+                st.session_state.speed,
+                st.session_state.val,
+                include_trace=True,
+                costs={
+                    "fuel_price": st.session_state.c_fuel,
+                    "driver_per_h": st.session_state.c_driver,
+                    "late_per_min": st.session_state.c_late,
+                },
+                use_amap=use_amap,
+                _amap_key=amap_key or None,
+            )
+        except ValueError as e:
+            st.error(str(e))
+            st.session_state.route_res = None
 
     res = st.session_state.get("route_res")
     stops = st.session_state.get("route_stops")
@@ -306,31 +464,41 @@ with T_ROUTE:
 
         pos = {s["name"]: (s["lat"], s["lng"]) for s in stops}
         c1, c2 = st.columns(2)
-        fm = go.Figure()
+        # 结果地图：按优化路径连线
+        res_map_stops = []
         for v in res["vehicles"]:
             names = [stops[0]["name"], *v["path"]]
-            fm.add_trace(
-                go.Scatter(
-                    x=[pos[n][1] for n in names],
-                    y=[pos[n][0] for n in names],
-                    mode="lines+markers+text",
-                    name=f"车{v['vehicle']} {v['load_kg']:.0f}kg",
-                    text=["仓"] + [str(i + 1) for i in range(len(v["path"]))],
-                    textposition="top center",
-                    hovertext=names,
-                    line=dict(color=COLORS[(v["vehicle"] - 1) % 6], width=2.5),
-                    marker=dict(size=8),
+            for n in names:
+                if n in pos and not any(x.get("name")==n for x in res_map_stops):
+                    res_map_stops.append({"name": n, "lat": pos[n][0], "lng": pos[n][1], "address": ""})
+        try:
+            rm = build_map(stops, zoom=10)
+            for v in res["vehicles"]:
+                names = [stops[0]["name"], *v["path"]]
+                coords = [[pos[n][0], pos[n][1]] for n in names if n in pos]
+                if len(coords) >= 2:
+                    folium.PolyLine(coords, color=["#1f77b4", "#d62728", "#2ca02c", "#ff7f0e"][(v["vehicle"]-1) % 4], weight=4, opacity=0.85,
+                                    tooltip=f"车{v['vehicle']}").add_to(rm)
+            st_folium(rm, height=360, width=None, returned_objects=[], key=f"resmap_{st.session_state.get('ver',0)}")
+        except Exception:
+            fm = go.Figure()
+            for v in res["vehicles"]:
+                names = [stops[0]["name"], *v["path"]]
+                fm.add_trace(
+                    go.Scatter(
+                        x=[pos[n][1] for n in names],
+                        y=[pos[n][0] for n in names],
+                        mode="lines+markers+text",
+                        name=f"车{v['vehicle']} {v['load_kg']:.0f}kg",
+                        text=["仓"] + [str(i + 1) for i in range(len(v["path"]))],
+                        textposition="top center",
+                        hovertext=names,
+                        line=dict(color=COLORS[(v["vehicle"] - 1) % 6], width=2.5),
+                        marker=dict(size=8),
+                    )
                 )
-            )
-        fm.update_layout(
-            title="配送路线",
-            xaxis_title="经度",
-            yaxis_title="纬度",
-            yaxis_scaleanchor="x",
-            height=380,
-            margin=dict(t=40, b=10),
-        )
-        c1.plotly_chart(fm, use_container_width=True)
+            fm.update_layout(title="配送路线", xaxis_title="经度", yaxis_title="纬度", yaxis_scaleanchor="x", height=380, margin=dict(t=40, b=10))
+            c1.plotly_chart(fm, use_container_width=True)
 
         ft = go.Figure()
         for v in res["vehicles"]:
@@ -343,13 +511,7 @@ with T_ROUTE:
                 )
             )
         band(ft, PRODUCTS[st.session_state.product])
-        ft.update_layout(
-            title="车厢温度曲线",
-            xaxis_title="发车后分钟",
-            yaxis_title="℃",
-            height=380,
-            margin=dict(t=40, b=10),
-        )
+        ft.update_layout(title="车厢温度曲线", xaxis_title="发车后分钟", yaxis_title="℃", height=380, margin=dict(t=40, b=10))
         c2.plotly_chart(ft, use_container_width=True)
 
         fb = go.Figure(
@@ -361,11 +523,7 @@ with T_ROUTE:
                 textposition="outside",
             )
         )
-        fb.update_layout(
-            title="成本对比",
-            height=260,
-            margin=dict(t=40, b=10),
-        )
+        fb.update_layout(title="成本对比", height=260, margin=dict(t=40, b=10))
         c1.plotly_chart(fb, use_container_width=True)
 
         bd = res["cost_breakdown"]
@@ -378,12 +536,7 @@ with T_ROUTE:
                 marker_color="#58a6ff",
             )
         )
-        fc.update_layout(
-            title="成本构成",
-            height=260,
-            margin=dict(t=40, b=10),
-            yaxis_autorange="reversed",
-        )
+        fc.update_layout(title="成本构成", height=260, margin=dict(t=40, b=10), yaxis_autorange="reversed")
         c2.plotly_chart(fc, use_container_width=True)
 
         st.dataframe(
@@ -408,6 +561,7 @@ with T_ROUTE:
         )
 
 with T_TEMP:
+
     src = st.radio(
         "数据来源",
         ["模拟 · 正常", "模拟 · 开门过久", "模拟 · 制冷故障", "上传 CSV"],

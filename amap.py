@@ -82,6 +82,26 @@ def weather(adcode, key):
     return {"temp": _f(lv.get("temperature")), "weather": lv.get("weather", ""), "city": lv.get("city", ""), "time": lv.get("reporttime", "")}
 
 # ---- WGS-84(GPS) → GCJ-02(高德) ----
+
+def regeo(lng, lat, key):
+    """逆地理编码：坐标 → 地址/名称。"""
+    ck = ("r", round(lng, 5), round(lat, 5))
+    if ck in _cache: return _cache[ck]
+    d = _get("/v3/geocode/regeo", {"location": f"{lng:.6f},{lat:.6f}", "extensions": "base"}, key)
+    regeocode = d.get("regeocode") or {}
+    addr = regeocode.get("formatted_address") or ""
+    comp = regeocode.get("addressComponent") or {}
+    name = ""
+    pois = (regeocode.get("pois") or [])
+    if pois:
+        name = pois[0].get("name") or ""
+    if not name:
+        name = comp.get("building") or comp.get("neighborhood", {}).get("name") if isinstance(comp.get("neighborhood"), dict) else comp.get("township") or addr[:20]
+    r = {"lng": float(lng), "lat": float(lat), "address": addr, "name": name or addr[:16] or f"{lat:.4f},{lng:.4f}",
+         "adcode": comp.get("adcode"), "city": comp.get("city") or comp.get("province") or ""}
+    _cache[ck] = r
+    return r
+
 def wgs84_to_gcj02(lng, lat):
     a, ee, pi = 6378245.0, 0.00669342162296594323, math.pi
     x, y = lng - 105.0, lat - 35.0
